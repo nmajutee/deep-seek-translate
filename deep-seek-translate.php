@@ -612,7 +612,7 @@ class DST_DeepSeek_Translate {
     }
 
     public function filter_wpseo_title($title, $presentation) {
-        if (is_admin() || !$presentation->model instanceof WP_Post) return $title;
+        if (is_admin() || !$presentation || !isset($presentation->model) || !$presentation->model instanceof WP_Post) return $title;
         $post = $presentation->model;
         if (!in_array($post->post_type, (array)$this->settings['auto_translate'], true)) return $title;
 
@@ -636,7 +636,7 @@ class DST_DeepSeek_Translate {
     }
 
     public function filter_wpseo_metadesc($desc, $presentation) {
-        if (is_admin() || !$presentation->model instanceof WP_Post) return $desc;
+        if (is_admin() || !$presentation || !isset($presentation->model) || !$presentation->model instanceof WP_Post) return $desc;
         $post = $presentation->model;
         if (!in_array($post->post_type, (array)$this->settings['auto_translate'], true)) return $desc;
 
@@ -870,7 +870,7 @@ class DST_DeepSeek_Translate {
     private function lang_url_for_current($target_lang) {
         $def  = $this->settings['default_lang'];
         $current = self::get_current_lang() ?: $def;
-        $url = (is_singular() ? get_permalink() : home_url(add_query_arg([])));
+        $url = is_singular() ? get_permalink() : home_url($_SERVER['REQUEST_URI'] ?? '/');
 
         $home = home_url('/');
         // Normalize

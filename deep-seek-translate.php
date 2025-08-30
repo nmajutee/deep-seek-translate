@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: DeepSeek Translate
- * Description: Advanced WordPress translation plugin v1.2.0 with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
- * Version: 1.2.0
+ * Description: Advanced WordPress translation plugin v1.2.1 with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages. Anti-crash protection included.
+ * Version: 1.2.1
  * Author: Nmaju Terence
  * License: GPL2+
  * Requires at least: 5.0
@@ -25,7 +25,7 @@ class DST_DeepSeek_Translate {
             'api_base'        => 'https://api.openai.com/v1',
             'api_model'       => 'gpt-4o-mini',
             'default_lang'    => 'en',
-            'enabled_langs'   => $this->eu_languages_codes(),
+            'enabled_langs'   => self::get_default_language_codes(),
             'url_mode'        => 'subdir',
             'auto_translate'  => ['post','page'],
             'translate_title' => 1,
@@ -95,6 +95,14 @@ class DST_DeepSeek_Translate {
     }
 
     /* ----------------------------- Languages ------------------------------ */
+    public static function get_default_language_codes() {
+        return [
+            'bg', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fi', 'fr',
+            'ga', 'hr', 'hu', 'it', 'lt', 'lv', 'mt', 'nl', 'pl', 'pt',
+            'ro', 'ru', 'sk', 'sl', 'sv', 'uk'
+        ];
+    }
+    
     public function eu_languages() {
         // List of 24 official EU languages plus Russian and Ukrainian
         return [
@@ -427,64 +435,77 @@ class DST_DeepSeek_Translate {
 
     /* ---------------------------- Translation API ---------------------------- */
     private function translate_via_api($text, $source_lang, $target_lang, $purpose = 'web_content') {
+        // Safety checks to prevent crashes
+        if (!$text || strlen($text) > 51200) {
+            return $text; // Skip very large content
+        }
+        
         if (!empty($this->settings['disable_api'])) {
             if (!empty($this->settings['debug_mode'])) error_log('DeepSeek Translate: API calls disabled for testing.');
             return $text; // Skip API call
         }
-        $api_key  = $this->settings['api_key'];
-        $api_base = rtrim($this->settings['api_base'], '/');
-        $model    = $this->settings['api_model'];
-        if (!$api_key || !$model) {
-            $error = 'API key or model not configured.';
-            set_transient('dst_api_error', $error, 300); // 5 min
-            if (!empty($this->settings['debug_mode'])) {
-                error_log('DeepSeek Translate API Error: ' . $error);
+        
+        try {
+            $api_key  = $this->settings['api_key'];
+            $api_base = rtrim($this->settings['api_base'], '/');
+            $model    = $this->settings['api_model'];
+            if (!$api_key || !$model) {
+                $error = 'API key or model not configured.';
+                set_transient('dst_api_error', $error, 300); // 5 min
+                if (!empty($this->settings['debug_mode'])) {
+                    error_log('DeepSeek Translate API Error: ' . $error);
+                }
+                return $text; // fail open
             }
-            return $text; // fail open
-        }
 
-        // Prompt: steer model to translate only
-        $system = sprintf('You are a professional website translator. Translate from %s to %s. Keep HTML tags and markdown structure intact. Do not add commentary.', strtoupper($source_lang), strtoupper($target_lang));
+            // Prompt: steer model to translate only
+            $system = sprintf('You are a professional website translator. Translate from %s to %s. Keep HTML tags and markdown structure intact. Do not add commentary.', strtoupper($source_lang), strtoupper($target_lang));
 
-        $body = [
-            'model' => $model,
-            'messages' => [
-                ['role' => 'system', 'content' => $system],
-                ['role' => 'user', 'content' => trim((string)$text)],
-            ],
-            'temperature' => 0.2,
-        ];
+            $body = [
+                'model' => $model,
+                'messages' => [
+                    ['role' => 'system', 'content' => $system],
+                    ['role' => 'user', 'content' => trim((string)$text)],
+                ],
+                'temperature' => 0.2,
+            ];
 
-        $resp = wp_remote_post($api_base . '/chat/completions', [
-            'headers' => [
-                'Content-Type'  => 'application/json',
-                'Authorization' => 'Bearer ' . $api_key,
-            ],
-            'body'    => wp_json_encode($body),
-            'timeout' => 15, // Reduced timeout to 15 seconds
-        ]);
+            $resp = wp_remote_post($api_base . '/chat/completions', [
+                'headers' => [
+                    'Content-Type'  => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key,
+                ],
+                'body'    => wp_json_encode($body),
+                'timeout' => 15, // Reduced timeout to 15 seconds
+            ]);
 
-        if (is_wp_error($resp)) {
-            $error = 'API request failed: ' . $resp->get_error_message();
-            set_transient('dst_api_error', $error, 300);
-            if (!empty($this->settings['debug_mode'])) {
-                error_log('DeepSeek Translate API Error: ' . $error);
+            if (is_wp_error($resp)) {
+                $error = 'API request failed: ' . $resp->get_error_message();
+                set_transient('dst_api_error', $error, 300);
+                if (!empty($this->settings['debug_mode'])) {
+                    error_log('DeepSeek Translate API Error: ' . $error);
+                }
+                return $text;
             }
-            return $text;
-        }
-        $code = wp_remote_retrieve_response_code($resp);
-        $body = wp_remote_retrieve_body($resp);
-        $json = json_decode($body, true);
-        if ($code !== 200 || !is_array($json) || !isset($json['choices'][0]['message']['content'])) {
-            $error_msg = is_array($json) && isset($json['error']['message']) ? $json['error']['message'] : 'Unknown error';
-            $error = 'API response error: HTTP ' . $code . ' - ' . $error_msg;
-            set_transient('dst_api_error', $error, 300);
-            if (!empty($this->settings['debug_mode'])) {
-                error_log('DeepSeek Translate API Error: ' . $error . ' | Response: ' . substr($body, 0, 500));
+            $code = wp_remote_retrieve_response_code($resp);
+            $body = wp_remote_retrieve_body($resp);
+            $json = json_decode($body, true);
+            if ($code !== 200 || !is_array($json) || !isset($json['choices'][0]['message']['content'])) {
+                $error_msg = is_array($json) && isset($json['error']['message']) ? $json['error']['message'] : 'Unknown error';
+                $error = 'API response error: HTTP ' . $code . ' - ' . $error_msg;
+                set_transient('dst_api_error', $error, 300);
+                if (!empty($this->settings['debug_mode'])) {
+                    error_log('DeepSeek Translate API Error: ' . $error . ' | Response: ' . substr($body, 0, 500));
+                }
+                return $text;
             }
-            return $text;
+            return (string)$json['choices'][0]['message']['content'];
+        } catch (Exception $e) {
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate API Exception: ' . $e->getMessage());
+            }
+            return $text; // Return original text on any exception
         }
-        return (string)$json['choices'][0]['message']['content'];
     }
 
     /**
@@ -504,6 +525,14 @@ class DST_DeepSeek_Translate {
         
         // Safety: Ensure settings are loaded
         if (empty($this->settings) || !is_array($this->settings)) {
+            return $text;
+        }
+        
+        // Safety: Limit content size to prevent memory issues (max 50KB)
+        if (strlen($text) > 51200) {
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate: Skipping large content (' . strlen($text) . ' bytes)');
+            }
             return $text;
         }
 
@@ -550,8 +579,13 @@ class DST_DeepSeek_Translate {
     }
 
     /* -------------------------- Content Translation ------------------------- */
+    private $processing_content = false; // Prevent recursive calls
+    private $processing_title = false; // Prevent recursive title calls
+    
     public function filter_content($content) {
-        if (is_admin()) return $content;
+        // Prevent recursive processing
+        if ($this->processing_content || is_admin()) return $content;
+        
         $post = get_post();
         if (!$post) return $content;
         if (!in_array($post->post_type, (array)$this->settings['auto_translate'], true)) return $content;
@@ -560,25 +594,43 @@ class DST_DeepSeek_Translate {
         $source = $this->settings['default_lang'];
         if ($target === $source) return $content;
 
-        $meta_key = self::META_PREFIX . $target . '_content_v2';
-        $cached   = get_post_meta($post->ID, $meta_key, true);
-        if ($cached) return $cached;
-
-        // Cache key also includes post_modified to bust when updated
-        $cache_key = 'dst_ct_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
-        $translated = $this->maybe_translate($cache_key, $content, $source, $target, $store_info);
-
-        if (empty($this->settings['translate_in_background'])) {
-            if ($translated && $translated !== $content) {
-                update_post_meta($post->ID, $meta_key, wp_kses_post($translated));
+        // Set flag to prevent recursion
+        $this->processing_content = true;
+        
+        try {
+            $meta_key = self::META_PREFIX . $target . '_content_v2';
+            $cached   = get_post_meta($post->ID, $meta_key, true);
+            if ($cached) {
+                $this->processing_content = false;
+                return $cached;
             }
+
+            // Cache key also includes post_modified to bust when updated
+            $cache_key = 'dst_ct_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
+            $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+            $translated = $this->maybe_translate($cache_key, $content, $source, $target, $store_info);
+
+            if (empty($this->settings['translate_in_background'])) {
+                if ($translated && $translated !== $content) {
+                    update_post_meta($post->ID, $meta_key, wp_kses_post($translated));
+                }
+            }
+            
+            $this->processing_content = false;
+            return $translated ?: $content;
+        } catch (Exception $e) {
+            $this->processing_content = false;
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate Content Filter Error: ' . $e->getMessage());
+            }
+            return $content; // Return original on error
         }
-        return $translated ?: $content;
     }
 
     public function filter_title($title, $post_id) {
-        if (is_admin()) return $title;
+        // Prevent recursive processing
+        if ($this->processing_title || is_admin()) return $title;
+        
         $post = get_post($post_id);
         if (!$post) return $title;
         if (!in_array($post->post_type, (array)$this->settings['auto_translate'], true)) return $title;
@@ -587,19 +639,35 @@ class DST_DeepSeek_Translate {
         $source = $this->settings['default_lang'];
         if ($target === $source) return $title;
 
-        $meta_key = self::META_PREFIX . $target . '_title_v2';
-        $cached   = get_post_meta($post->ID, $meta_key, true);
-        if ($cached) return $cached;
-
-        $cache_key = 'dst_tt_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
-        $translated = $this->maybe_translate($cache_key, $title, $source, $target, $store_info);
-        if (empty($this->settings['translate_in_background'])) {
-            if ($translated && $translated !== $title) {
-                update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+        // Set flag to prevent recursion
+        $this->processing_title = true;
+        
+        try {
+            $meta_key = self::META_PREFIX . $target . '_title_v2';
+            $cached   = get_post_meta($post->ID, $meta_key, true);
+            if ($cached) {
+                $this->processing_title = false;
+                return $cached;
             }
+
+            $cache_key = 'dst_tt_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
+            $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+            $translated = $this->maybe_translate($cache_key, $title, $source, $target, $store_info);
+            if (empty($this->settings['translate_in_background'])) {
+                if ($translated && $translated !== $title) {
+                    update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+                }
+            }
+            
+            $this->processing_title = false;
+            return $translated ?: $title;
+        } catch (Exception $e) {
+            $this->processing_title = false;
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate Title Filter Error: ' . $e->getMessage());
+            }
+            return $title; // Return original on error
         }
-        return $translated ?: $title;
     }
 
     public function filter_gettext($translation, $text, $domain) {

@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: DeepSeek Translate
- * Description: Simple translation plugin that auto-translates content using DeepSeek via OpenRouter API. Supports multiple languages, URL prefixes, caching, and language switcher.
+ * Description: Simple translation plugin that auto-translates content using AI APIs like OpenAI or DeepSeek. Supports multiple languages, URL prefixes, caching, and language switcher.
  * Version: 0.2.0
  * Author: Nmaju Terence
  * License: GPL2+
@@ -22,8 +22,8 @@ class DST_DeepSeek_Translate {
     public function __construct() {
         $defaults = [
             'api_key'         => '',
-            'api_base'        => 'https://openrouter.ai/api/v1',
-            'api_model'       => 'deepseek/deepseek-chat',
+            'api_base'        => 'https://api.openai.com/v1',
+            'api_model'       => 'gpt-3.5-turbo',
             'default_lang'    => 'en',
             'enabled_langs'   => $this->eu_languages_codes(),
             'url_mode'        => 'subdir',
@@ -176,7 +176,7 @@ class DST_DeepSeek_Translate {
     public function sanitize_settings($input) {
         $out = [];
         $out['api_key']  = isset($input['api_key']) ? trim($input['api_key']) : '';
-        $out['api_base'] = isset($input['api_base']) ? esc_url_raw($input['api_base']) : 'https://openrouter.ai/api/v1';
+        $out['api_base'] = isset($input['api_base']) ? esc_url_raw($input['api_base']) : 'https://api.openai.com/v1';
         $out['api_model'] = isset($input['api_model']) ? sanitize_text_field($input['api_model']) : 'deepseek-chat';
         $langs = $this->eu_languages_codes();
         $out['default_lang'] = in_array($input['default_lang'] ?? 'en', $langs, true) ? $input['default_lang'] : 'en';
@@ -213,14 +213,14 @@ class DST_DeepSeek_Translate {
                         <th scope="row"><label>API Base URL</label></th>
                         <td>
                             <input type="url" style="width: 420px;" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_base]" value="<?php echo esc_attr($opts['api_base']); ?>" />
-                            <p class="description">Default: https://openrouter.ai/api/v1 (for OpenRouter API)</p>
+                            <p class="description">Default: https://api.openai.com/v1 (for OpenAI API)</p>
                         </td>
                     </tr>
                     <tr>
                         <th scope="row"><label>Model</label></th>
                         <td>
                             <input type="text" style="width: 220px;" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_model]" value="<?php echo esc_attr($opts['api_model']); ?>" />
-                            <p class="description">Example: deepseek/deepseek-chat (OpenRouter model name)</p>
+                            <p class="description">Example: gpt-3.5-turbo (OpenAI model)</p>
                         </td>
                     </tr>
                     <tr>

@@ -1,6 +1,6 @@
 # DeepSeek Translate
 
-A simple WordPress plugin for automatic content translation using DeepSeek via OpenRouter API. Supports multiple languages with SEO optimization.
+A simple WordPress plugin for automatic content translation using AI APIs like OpenAI or DeepSeek. Supports multiple languages with SEO optimization.
 
 ## Table of Contents
 - [Features](#features)
@@ -26,7 +26,7 @@ A simple WordPress plugin for automatic content translation using DeepSeek via O
 
 ## Configuration
 After activation:
-1. **API Key**: Get from [OpenRouter.ai](https://openrouter.ai) and enter here.
+1. **API Key**: Get from [OpenAI](https://platform.openai.com) or [OpenRouter](https://openrouter.ai) and enter here.
 2. **Default Language**: Choose your site's main language (e.g., English).
 3. **Enabled Languages**: Select languages to translate to.
 4. **Auto-Translate**: Choose post types (e.g., posts, pages).
@@ -42,7 +42,7 @@ After activation:
 ## Requirements
 - WordPress 5.0 or higher
 - PHP 7.4 or higher
-- OpenRouter API account
+- OpenAI or OpenRouter API account
 
 ## License
 GPL-2.0-or-later

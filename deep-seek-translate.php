@@ -393,7 +393,18 @@ class DST_DeepSeek_Translate {
 
     private function set_current_lang($lang) {
         $langs = (array)$this->settings['enabled_langs'];
-        if (!in_array($lang, $langs, true)) $lang = $this->settings['default_lang'];
+        $default = $this->settings['default_lang'];
+        
+        // Ensure the lang is in enabled languages, otherwise use default
+        if (!in_array($lang, $langs, true)) {
+            $lang = $default;
+        }
+        
+        // Safety: If default lang is not in enabled langs, use first enabled lang
+        if (!in_array($lang, $langs, true) && !empty($langs)) {
+            $lang = $langs[0];
+        }
+        
         $GLOBALS['dst_current_lang'] = $lang;
     }
 
@@ -806,6 +817,12 @@ class DST_DeepSeek_Translate {
         wp_enqueue_script('dst-switcher');
         $langs = $this->eu_languages();
         $enabled = array_intersect_key($langs, array_flip((array)$this->settings['enabled_langs']));
+        
+        // Safety: Return empty if no enabled languages
+        if (empty($enabled)) {
+            return '<div class="dst-switcher">No languages enabled</div>';
+        }
+        
         $current = self::get_current_lang() ?: $this->settings['default_lang'];
         $flags = $this->get_flag_emojis();
         $out = '<div class="dst-switcher"><select onchange="if(this.value){window.location.assign(this.value)}">';

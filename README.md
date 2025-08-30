@@ -1,4 +1,4 @@
-# DeepSeek Translate v1.2.0 DeepSeek Translate v1.1.0
+# DeepSeek Translate v1.2.0
 
 A simple WordPress plugin for automatic content translation using AI APIs like OpenAI or DeepSeek. Supports multiple languages with SEO optimization.
 

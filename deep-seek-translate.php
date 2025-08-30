@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: DeepSeek Translate
- * Description: Simple translation plugin that auto-translates content using AI APIs like OpenAI or DeepSeek. Supports multiple languages, URL prefixes, caching, and language switcher.
+ * Description: Advanced WordPress translation plugin with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
  * Version: 0.2.0
  * Author: Nmaju Terence
  * License: GPL2+
@@ -32,6 +32,7 @@ class DST_DeepSeek_Translate {
             'translate_textdomain_strings' => 0,
             'translate_meta' => 0,
             'debug_mode' => 0,
+            'disable_api' => 0, // temporarily disable API calls for testing
             'cache_ttl'       => 0,
         ];
         $saved = get_option(self::OPTION_KEY, []);
@@ -188,6 +189,7 @@ class DST_DeepSeek_Translate {
         $out['translate_textdomain_strings'] = !empty($input['translate_textdomain_strings']) ? 1 : 0;
         $out['translate_meta'] = !empty($input['translate_meta']) ? 1 : 0;
         $out['debug_mode'] = !empty($input['debug_mode']) ? 1 : 0;
+        $out['disable_api'] = !empty($input['disable_api']) ? 1 : 0;
         $out['cache_ttl'] = isset($input['cache_ttl']) ? max(0, intval($input['cache_ttl'])) : 0;
         return $out;
     }
@@ -274,6 +276,10 @@ class DST_DeepSeek_Translate {
                         <td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[debug_mode]" value="1" <?php checked(!empty($opts['debug_mode'])); ?> /> Enable detailed error logging</label></td>
                     </tr>
                     <tr>
+                        <th scope="row"><label>Disable API Calls</label></th>
+                        <td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[disable_api]" value="1" <?php checked(!empty($opts['disable_api'])); ?> /> Temporarily disable API calls (for testing)</label></td>
+                    </tr>
+                    <tr>
                         <th scope="row"><label>Cache TTL (seconds)</label></th>
                         <td>
                             <input type="number" min="0" step="60" name="<?php echo esc_attr(self::OPTION_KEY); ?>[cache_ttl]" value="<?php echo esc_attr($opts['cache_ttl']); ?>" />
@@ -345,13 +351,19 @@ class DST_DeepSeek_Translate {
 
     /* ---------------------------- Translation API ---------------------------- */
     private function translate_via_api($text, $source_lang, $target_lang, $purpose = 'web_content') {
+        if (!empty($this->settings['disable_api'])) {
+            if (!empty($this->settings['debug_mode'])) error_log('DeepSeek Translate: API calls disabled for testing.');
+            return $text; // Skip API call
+        }
         $api_key  = $this->settings['api_key'];
         $api_base = rtrim($this->settings['api_base'], '/');
         $model    = $this->settings['api_model'];
         if (!$api_key || !$model) {
             $error = 'API key or model not configured.';
             set_transient('dst_api_error', $error, 300); // 5 min
-            if (!empty($this->settings['debug_mode'])) error_log('DeepSeek Translate: ' . $error);
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate API Error: ' . $error);
+            }
             return $text; // fail open
         }
 
@@ -373,13 +385,15 @@ class DST_DeepSeek_Translate {
                 'Authorization' => 'Bearer ' . $api_key,
             ],
             'body'    => wp_json_encode($body),
-            'timeout' => 30,
+            'timeout' => 15, // Reduced timeout to 15 seconds
         ]);
 
         if (is_wp_error($resp)) {
             $error = 'API request failed: ' . $resp->get_error_message();
             set_transient('dst_api_error', $error, 300);
-            if (!empty($this->settings['debug_mode'])) error_log('DeepSeek Translate: ' . $error);
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate API Error: ' . $error);
+            }
             return $text;
         }
         $code = wp_remote_retrieve_response_code($resp);
@@ -389,7 +403,9 @@ class DST_DeepSeek_Translate {
             $error_msg = is_array($json) && isset($json['error']['message']) ? $json['error']['message'] : 'Unknown error';
             $error = 'API response error: HTTP ' . $code . ' - ' . $error_msg;
             set_transient('dst_api_error', $error, 300);
-            if (!empty($this->settings['debug_mode'])) error_log('DeepSeek Translate: ' . $error);
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate API Error: ' . $error . ' | Response: ' . substr($body, 0, 500));
+            }
             return $text;
         }
         return (string)$json['choices'][0]['message']['content'];

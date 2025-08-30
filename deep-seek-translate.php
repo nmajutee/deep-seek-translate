@@ -33,6 +33,7 @@ class DST_DeepSeek_Translate {
             'translate_meta' => 0,
             'debug_mode' => 0,
             'disable_api' => 0, // temporarily disable API calls for testing
+            'translate_in_background' => 1, // schedule translations via WP-Cron instead of blocking requests
             'cache_ttl'       => 0,
         ];
         $saved = get_option(self::OPTION_KEY, []);
@@ -43,6 +44,9 @@ class DST_DeepSeek_Translate {
         add_action('admin_menu', [$this, 'register_settings_page']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_notices', [$this, 'admin_notices']);
+    // Cron & background
+    add_filter('cron_schedules', [$this, 'add_cron_schedules']);
+    add_action('dst_process_translation_queue', [$this, 'process_translation_queue']);
 
         // Frontend: URL language handling
         add_action('init', [$this, 'add_rewrite_rules']);
@@ -152,6 +156,49 @@ class DST_DeepSeek_Translate {
                 echo '<div class="notice notice-success is-dismissible"><p>Translation cache cleared successfully.</p></div>';
             });
         }
+        // Ensure cron hook is registered
+        if (!wp_next_scheduled('dst_process_translation_queue')) {
+            wp_schedule_event(time() + 10, 'dst_minute', 'dst_process_translation_queue');
+        }
+    }
+
+    public function add_cron_schedules($schedules) {
+        if (!isset($schedules['dst_minute'])) {
+            $schedules['dst_minute'] = ['interval' => 60, 'display' => __('Every Minute')];
+        }
+        return $schedules;
+    }
+
+    /**
+     * Process queued translations (WP-Cron handler).
+     * Runs periodically and processes a small batch to avoid long execution.
+     */
+    public function process_translation_queue() {
+        $queue = get_option('dst_translation_queue', []);
+        if (empty($queue) || !is_array($queue)) return;
+        $batch = array_splice($queue, 0, 6); // process up to 6 items per run
+        foreach ($batch as $job) {
+            $cache_key = $job['cache_key'] ?? '';
+            $text = $job['text'] ?? '';
+            $source = $job['source'] ?? $this->settings['default_lang'];
+            $target = $job['target'] ?? $this->settings['default_lang'];
+            $store = $job['store'] ?? 'transient';
+            $post_id = $job['post_id'] ?? null;
+            $meta_key = $job['meta_key'] ?? null;
+
+            $translated = $this->translate_via_api($text, $source, $target);
+            if ($translated && $translated !== $text) {
+                if ($store === 'post_meta' && $post_id && $meta_key) {
+                    update_post_meta($post_id, $meta_key, $store === 'post_meta' ? sanitize_text_field($translated) : $translated);
+                }
+                // Always set transient cache as well
+                $ttl = intval($this->settings['cache_ttl']);
+                if ($ttl === 0) $ttl = YEAR_IN_SECONDS * 5;
+                set_transient($cache_key, $translated, $ttl);
+            }
+        }
+        // Save remaining queue
+        update_option('dst_translation_queue', $queue);
     }
 
     public function admin_notices() {
@@ -411,13 +458,45 @@ class DST_DeepSeek_Translate {
         return (string)$json['choices'][0]['message']['content'];
     }
 
-    private function maybe_translate($cache_key, $text, $source_lang, $target_lang) {
+    /**
+     * Try to return a cached translation, otherwise either perform translation
+     * synchronously or enqueue a background job depending on settings.
+     *
+     * @param string $cache_key
+     * @param string $text
+     * @param string $source_lang
+     * @param string $target_lang
+     * @param array  $store_info Optional: ['store'=>'post_meta'|'transient','post_id'=>int,'meta_key'=>string]
+     * @return string
+     */
+    private function maybe_translate($cache_key, $text, $source_lang, $target_lang, $store_info = []) {
         if (!$text) return $text;
         if ($target_lang === $source_lang) return $text;
 
         $cached = get_transient($cache_key);
         if ($cached !== false) return (string)$cached;
 
+        // If configured to translate in background, enqueue and return original text.
+        if (!empty($this->settings['translate_in_background'])) {
+            $queue = get_option('dst_translation_queue', []);
+            $job = [
+                'cache_key' => $cache_key,
+                'text'      => $text,
+                'source'    => $source_lang,
+                'target'    => $target_lang,
+                'store'     => $store_info['store'] ?? 'transient',
+                'post_id'   => $store_info['post_id'] ?? null,
+                'meta_key'  => $store_info['meta_key'] ?? null,
+            ];
+            $queue[] = $job;
+            update_option('dst_translation_queue', $queue);
+            if (!empty($this->settings['debug_mode'])) {
+                error_log('DeepSeek Translate: Enqueued translation job for ' . substr($cache_key, 0, 40));
+            }
+            return $text; // return original until background worker completes
+        }
+
+        // Synchronous path
         $translated = $this->translate_via_api($text, $source_lang, $target_lang);
 
         $ttl = intval($this->settings['cache_ttl']);
@@ -443,10 +522,13 @@ class DST_DeepSeek_Translate {
 
         // Cache key also includes post_modified to bust when updated
         $cache_key = 'dst_ct_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $translated = $this->maybe_translate($cache_key, $content, $source, $target);
+        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $content, $source, $target, $store_info);
 
-        if ($translated && $translated !== $content) {
-            update_post_meta($post->ID, $meta_key, wp_kses_post($translated));
+        if (empty($this->settings['translate_in_background'])) {
+            if ($translated && $translated !== $content) {
+                update_post_meta($post->ID, $meta_key, wp_kses_post($translated));
+            }
         }
         return $translated ?: $content;
     }
@@ -466,9 +548,12 @@ class DST_DeepSeek_Translate {
         if ($cached) return $cached;
 
         $cache_key = 'dst_tt_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $translated = $this->maybe_translate($cache_key, $title, $source, $target);
-        if ($translated && $translated !== $title) {
-            update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $title, $source, $target, $store_info);
+        if (empty($this->settings['translate_in_background'])) {
+            if ($translated && $translated !== $title) {
+                update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+            }
         }
         return $translated ?: $title;
     }
@@ -496,9 +581,12 @@ class DST_DeepSeek_Translate {
         if ($cached) return $cached;
 
         $cache_key = 'dst_yt_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $translated = $this->maybe_translate($cache_key, $title, $source, $target);
-        if ($translated && $translated !== $title) {
-            update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $title, $source, $target, $store_info);
+        if (empty($this->settings['translate_in_background'])) {
+            if ($translated && $translated !== $title) {
+                update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+            }
         }
         return $translated ?: $title;
     }
@@ -517,9 +605,12 @@ class DST_DeepSeek_Translate {
         if ($cached) return $cached;
 
         $cache_key = 'dst_ymd_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $translated = $this->maybe_translate($cache_key, $desc, $source, $target);
-        if ($translated && $translated !== $desc) {
-            update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $desc, $source, $target, $store_info);
+        if (empty($this->settings['translate_in_background'])) {
+            if ($translated && $translated !== $desc) {
+                update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+            }
         }
         return $translated ?: $desc;
     }
@@ -538,9 +629,12 @@ class DST_DeepSeek_Translate {
         if ($cached) return $cached;
 
         $cache_key = 'dst_yfk_' . md5($post->ID . '|' . $post->post_modified_gmt . '|' . $target);
-        $translated = $this->maybe_translate($cache_key, $kw, $source, $target);
-        if ($translated && $translated !== $kw) {
-            update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+        $store_info = ['store' => 'post_meta', 'post_id' => $post->ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $kw, $source, $target, $store_info);
+        if (empty($this->settings['translate_in_background'])) {
+            if ($translated && $translated !== $kw) {
+                update_post_meta($post->ID, $meta_key, sanitize_text_field($translated));
+            }
         }
         return $translated ?: $kw;
     }
@@ -550,8 +644,8 @@ class DST_DeepSeek_Translate {
         $target = self::get_current_lang() ?: $this->settings['default_lang'];
         $source = $this->settings['default_lang'];
         if ($target === $source) return $text;
-        $cache_key = 'dst_wt_' . md5($text . '|' . $target);
-        return $this->maybe_translate($cache_key, $text, $source, $target);
+    $cache_key = 'dst_wt_' . md5($text . '|' . $target);
+    return $this->maybe_translate($cache_key, $text, $source, $target);
     }
 
     public function filter_nav_menu_items($items) {
@@ -604,11 +698,15 @@ class DST_DeepSeek_Translate {
         if ($cached) return $cached;
 
         $cache_key = 'dst_slug_' . md5($post_ID . '|' . $original_slug . '|' . $lang);
-        $translated = $this->maybe_translate($cache_key, $original_slug, $def, $lang);
+        $store_info = ['store' => 'post_meta', 'post_id' => $post_ID, 'meta_key' => $meta_key];
+        $translated = $this->maybe_translate($cache_key, $original_slug, $def, $lang, $store_info);
         $translated_slug = sanitize_title($translated);
         if ($translated_slug && $translated_slug !== $original_slug) {
-            update_post_meta($post_ID, $meta_key, $translated_slug);
-            return $translated_slug;
+            if (empty($this->settings['translate_in_background'])) {
+                update_post_meta($post_ID, $meta_key, $translated_slug);
+                return $translated_slug;
+            }
+            // When queued, slug will be saved by worker later; return original to avoid collisions now
         }
         return $slug;
     }
@@ -634,10 +732,13 @@ class DST_DeepSeek_Translate {
             if ($lang === $def) continue;
             $meta_key = self::META_PREFIX . $lang . '_slug_v2';
             $cache_key = 'dst_slug_' . md5($post_id . '|' . $original_slug . '|' . $lang);
-            $translated = $this->maybe_translate($cache_key, $original_slug, $def, $lang);
+            $store_info = ['store' => 'post_meta', 'post_id' => $post_id, 'meta_key' => $meta_key];
+            $translated = $this->maybe_translate($cache_key, $original_slug, $def, $lang, $store_info);
             $translated_slug = sanitize_title($translated);
             if ($translated_slug && $translated_slug !== $original_slug) {
-                update_post_meta($post_id, $meta_key, $translated_slug);
+                if (empty($this->settings['translate_in_background'])) {
+                    update_post_meta($post_id, $meta_key, $translated_slug);
+                }
             }
         }
     }

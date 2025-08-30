@@ -1,4 +1,4 @@
-# DeepSeek Translate v1.0.0
+# DeepSeek Translate v1.1.0
 
 A simple WordPress plugin for automatic content translation using AI APIs like OpenAI or DeepSeek. Supports multiple languages with SEO optimization.
 
@@ -49,7 +49,7 @@ After activation:
 - OpenAI or OpenRouter API account
 
 ## Changelog
-- **v1.0.0**: Stable release with all features: AI translation, SEO optimization, 26 languages, caching, debug tools.
+- **v1.1.0**: Background translation queue + WP-Cron worker to avoid blocking page requests, enqueueing of translation jobs, bug fixes and improvements.
 - **v0.2.0**: Added OpenAI support, SEO enhancements (canonicals, noindex, translated slugs), debug mode, API disable, extended languages (Russian, Ukrainian).
 - **v0.1.0**: Initial release with basic translation, caching, and language switcher.
 

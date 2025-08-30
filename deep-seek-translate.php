@@ -44,9 +44,10 @@ class DST_DeepSeek_Translate {
         add_action('admin_menu', [$this, 'register_settings_page']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_notices', [$this, 'admin_notices']);
-    // Cron & background
-    add_filter('cron_schedules', [$this, 'add_cron_schedules']);
-    add_action('dst_process_translation_queue', [$this, 'process_translation_queue']);
+        
+        // Cron & background
+        add_filter('cron_schedules', [$this, 'add_cron_schedules']);
+        add_action('dst_process_translation_queue', [$this, 'process_translation_queue']);
 
         // Frontend: URL language handling
         add_action('init', [$this, 'add_rewrite_rules']);
@@ -174,10 +175,19 @@ class DST_DeepSeek_Translate {
      * Runs periodically and processes a small batch to avoid long execution.
      */
     public function process_translation_queue() {
+        // Safety: Ensure settings are loaded
+        if (empty($this->settings) || !is_array($this->settings)) {
+            return;
+        }
+        
         $queue = get_option('dst_translation_queue', []);
         if (empty($queue) || !is_array($queue)) return;
+        
         $batch = array_splice($queue, 0, 6); // process up to 6 items per run
         foreach ($batch as $job) {
+            // Safety: Check job structure
+            if (!is_array($job)) continue;
+            
             $cache_key = $job['cache_key'] ?? '';
             $text = $job['text'] ?? '';
             $source = $job['source'] ?? $this->settings['default_lang'];
@@ -186,10 +196,13 @@ class DST_DeepSeek_Translate {
             $post_id = $job['post_id'] ?? null;
             $meta_key = $job['meta_key'] ?? null;
 
+            // Skip empty jobs
+            if (empty($cache_key) || empty($text)) continue;
+
             $translated = $this->translate_via_api($text, $source, $target);
             if ($translated && $translated !== $text) {
                 if ($store === 'post_meta' && $post_id && $meta_key) {
-                    update_post_meta($post_id, $meta_key, $store === 'post_meta' ? sanitize_text_field($translated) : $translated);
+                    update_post_meta($post_id, $meta_key, sanitize_text_field($translated));
                 }
                 // Always set transient cache as well
                 $ttl = intval($this->settings['cache_ttl']);
@@ -237,6 +250,7 @@ class DST_DeepSeek_Translate {
         $out['translate_meta'] = !empty($input['translate_meta']) ? 1 : 0;
         $out['debug_mode'] = !empty($input['debug_mode']) ? 1 : 0;
         $out['disable_api'] = !empty($input['disable_api']) ? 1 : 0;
+        $out['translate_in_background'] = !empty($input['translate_in_background']) ? 1 : 0;
         $out['cache_ttl'] = isset($input['cache_ttl']) ? max(0, intval($input['cache_ttl'])) : 0;
         return $out;
     }
@@ -325,6 +339,10 @@ class DST_DeepSeek_Translate {
                     <tr>
                         <th scope="row"><label>Disable API Calls</label></th>
                         <td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[disable_api]" value="1" <?php checked(!empty($opts['disable_api'])); ?> /> Temporarily disable API calls (for testing)</label></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label>Translate in Background</label></th>
+                        <td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[translate_in_background]" value="1" <?php checked(!empty($opts['translate_in_background'])); ?> /> Process translations via WP-Cron to avoid blocking page requests (recommended for shared hosting)</label></td>
                     </tr>
                     <tr>
                         <th scope="row"><label>Cache TTL (seconds)</label></th>
@@ -472,26 +490,41 @@ class DST_DeepSeek_Translate {
     private function maybe_translate($cache_key, $text, $source_lang, $target_lang, $store_info = []) {
         if (!$text) return $text;
         if ($target_lang === $source_lang) return $text;
+        
+        // Safety: Ensure settings are loaded
+        if (empty($this->settings) || !is_array($this->settings)) {
+            return $text;
+        }
 
         $cached = get_transient($cache_key);
         if ($cached !== false) return (string)$cached;
 
         // If configured to translate in background, enqueue and return original text.
         if (!empty($this->settings['translate_in_background'])) {
-            $queue = get_option('dst_translation_queue', []);
-            $job = [
-                'cache_key' => $cache_key,
-                'text'      => $text,
-                'source'    => $source_lang,
-                'target'    => $target_lang,
-                'store'     => $store_info['store'] ?? 'transient',
-                'post_id'   => $store_info['post_id'] ?? null,
-                'meta_key'  => $store_info['meta_key'] ?? null,
-            ];
-            $queue[] = $job;
-            update_option('dst_translation_queue', $queue);
-            if (!empty($this->settings['debug_mode'])) {
-                error_log('DeepSeek Translate: Enqueued translation job for ' . substr($cache_key, 0, 40));
+            try {
+                $queue = get_option('dst_translation_queue', []);
+                if (!is_array($queue)) $queue = [];
+                
+                $job = [
+                    'cache_key' => $cache_key,
+                    'text'      => $text,
+                    'source'    => $source_lang,
+                    'target'    => $target_lang,
+                    'store'     => $store_info['store'] ?? 'transient',
+                    'post_id'   => $store_info['post_id'] ?? null,
+                    'meta_key'  => $store_info['meta_key'] ?? null,
+                ];
+                $queue[] = $job;
+                update_option('dst_translation_queue', $queue);
+                
+                if (!empty($this->settings['debug_mode'])) {
+                    error_log('DeepSeek Translate: Enqueued translation job for ' . substr($cache_key, 0, 40));
+                }
+            } catch (Exception $e) {
+                // Fallback to synchronous if queueing fails
+                if (!empty($this->settings['debug_mode'])) {
+                    error_log('DeepSeek Translate: Queue failed, falling back to sync: ' . $e->getMessage());
+                }
             }
             return $text; // return original until background worker completes
         }

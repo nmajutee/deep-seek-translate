@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: DeepSeek Translate
- * Description: Advanced WordPress translation plugin v1.1.0 with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
- * Version: 1.1.0
+ * Description: Advanced WordPress translation plugin v1.2.0 with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
+ * Version: 1.2.0
  * Author: Nmaju Terence
  * License: GPL2+
  * Requires at least: 5.0
@@ -23,7 +23,7 @@ class DST_DeepSeek_Translate {
         $defaults = [
             'api_key'         => '',
             'api_base'        => 'https://api.openai.com/v1',
-            'api_model'       => 'gpt-3.5-turbo',
+            'api_model'       => 'gpt-4o-mini',
             'default_lang'    => 'en',
             'enabled_langs'   => $this->eu_languages_codes(),
             'url_mode'        => 'subdir',
@@ -238,7 +238,7 @@ class DST_DeepSeek_Translate {
         $out = [];
         $out['api_key']  = isset($input['api_key']) ? trim($input['api_key']) : '';
         $out['api_base'] = isset($input['api_base']) ? esc_url_raw($input['api_base']) : 'https://api.openai.com/v1';
-        $out['api_model'] = isset($input['api_model']) ? sanitize_text_field($input['api_model']) : 'deepseek-chat';
+        $out['api_model'] = isset($input['api_model']) ? sanitize_text_field($input['api_model']) : 'gpt-4o-mini';
         $langs = $this->eu_languages_codes();
         $out['default_lang'] = in_array($input['default_lang'] ?? 'en', $langs, true) ? $input['default_lang'] : 'en';
         $enabled = array_values(array_intersect($langs, (array)($input['enabled_langs'] ?? [])));
@@ -283,7 +283,7 @@ class DST_DeepSeek_Translate {
                         <th scope="row"><label>Model</label></th>
                         <td>
                             <input type="text" style="width: 220px;" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_model]" value="<?php echo esc_attr($opts['api_model']); ?>" />
-                            <p class="description">Example: gpt-3.5-turbo (OpenAI model)</p>
+                            <p class="description">Example: gpt-4o-mini (OpenAI model)</p>
                         </td>
                     </tr>
                     <tr>

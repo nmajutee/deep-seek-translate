@@ -1,0 +1,12 @@
+// Alternative: Add this to your theme's functions.php if cron setup fails
+// This will process translations on every admin page load (fallback method)
+
+add_action('admin_init', function() {
+    // Only run occasionally to avoid overload
+    if (rand(1, 10) === 1) { // 10% chance on each admin page
+        $dst = new DST_DeepSeek_Translate();
+        $dst->process_translation_queue();
+    }
+});
+
+// Note: This is less efficient than proper cron but works as backup

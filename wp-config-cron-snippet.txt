@@ -1,0 +1,5 @@
+// Add this line to your wp-config.php file (above the "/* That's all, stop editing!" line)
+define('DISABLE_WP_CRON', true);
+
+// This disables WordPress automatic cron and relies on your Hostinger cron job
+// This prevents double-execution and improves performance

@@ -1,12 +1,12 @@
 <?php
 /**
  * Plugin Name: DeepSeek Translate
- * Description: Advanced WordPress translation plugin with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
- * Version: 0.2.0
+ * Description: Advanced WordPress translation plugin v1.0.0 with AI-powered auto-translation (OpenAI/DeepSeek), SEO optimization (hreflang, canonicals), language switcher with flags, caching, and support for 26 languages.
+ * Version: 1.0.0
  * Author: Nmaju Terence
  * License: GPL2+
  * Requires at least: 5.0
- * Tested up to: 6.6
+ * Tested up to: 6.7
  * Requires PHP: 7.4
  */
 
